@@ -2,6 +2,7 @@ add_library(aero
     details/euler_solver.cpp
     details/euler_multigrid_solver.cpp
     details/euler_simulation.cpp
+    details/rans_solver.cpp
 )
 
 # Expose public headers
