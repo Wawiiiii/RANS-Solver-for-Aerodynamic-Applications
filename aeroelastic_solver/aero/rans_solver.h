@@ -33,13 +33,15 @@ namespace rans {
 
     // --- viscous-physics atoms (Phase A) ---
 
-    // Green-Gauss gradient of a scalar at one cell:
-    //   grad phi = (1/area) sum_faces 0.5*(phi_c + phi_nb) * S_face
-    // phi_neighbor is in face order [0]=j- [1]=i+ [2]=j+ [3]=i-.
-    Vec2 green_gauss_gradient(
-        double phi_center,
-        const double phi_neighbor[4],
-        const CellGeom& cell);
+    // Least-squares gradient of a scalar at one cell from n neighbors.
+    // Solves the distance-weighted (w = 1/|dr|^2) normal equations for the plane
+    // best matching the neighbor differences. Exact for a linear field on ANY
+    // mesh (any skewness/aspect ratio) -- unlike Green-Gauss, which is
+    // inconsistent on the high-aspect-ratio cells of a boundary-layer mesh.
+    // dx[k], dy[k] are neighbor-center minus cell-center; dphi[k] is the value
+    // difference. Needs >= 2 non-collinear neighbors.
+    Vec2 least_squares_gradient(
+        const double dx[], const double dy[], const double dphi[], int n);
 
     // Gradient at the face between cells L and R: averaged cell gradients with
     // the L->R component replaced by the direct difference. (dx_LR, dy_LR) is
@@ -56,6 +58,11 @@ namespace rans {
         double u_face, double v_face,
         double mu, double k,
         double nx, double ny);
+
+    // --- state conversions ---
+    Primitive conserved_to_primitive(const Conserved& U);
+    Conserved primitive_to_conserved(const Primitive& W);
+    double temperature(const Primitive& W); // p/rho (R = 1 nondimensionalization)
 
     // --- solver skeleton: mesh handling (Phase B0) ---
 
@@ -93,6 +100,24 @@ namespace rans {
 
         GeometryReport check_geometry() const;
 
+        // --- state + gradients (Phase B1) ---
+
+        Conserved&       state(int i, int j)       { return U_[idx(i, j)]; }
+        const Conserved& state(int i, int j) const { return U_[idx(i, j)]; }
+
+        // Fill ghost cells so boundary cells see valid neighbors: periodic in i
+        // (the O-grid seam), zero-gradient in j (placeholder until the real
+        // wall/farfield BCs land).
+        void fill_ghost_cells();
+
+        // Cell-centered gradients of u, v, T over all interior cells (Green-Gauss).
+        // Call fill_ghost_cells() first.
+        void compute_gradients();
+
+        const Vec2& grad_u(int i, int j) const { return grad_u_[idx(i, j)]; }
+        const Vec2& grad_v(int i, int j) const { return grad_v_[idx(i, j)]; }
+        const Vec2& grad_T(int i, int j) const { return grad_T_[idx(i, j)]; }
+
     private:
         void validate_grid(
             const std::vector<double>& x_nodes,
@@ -120,5 +145,7 @@ namespace rans {
         int j_start_ = 0, j_end_ = 0;
 
         std::vector<CellGeom> geom_;
+        std::vector<Conserved> U_;                  // conserved state (ghost-padded)
+        std::vector<Vec2> grad_u_, grad_v_, grad_T_; // cell-centered gradients
     };
 }

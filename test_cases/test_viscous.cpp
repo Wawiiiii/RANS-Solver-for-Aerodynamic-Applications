@@ -19,45 +19,31 @@ static void check(const std::string& name, double got, double want, double tol)
     if (!ok) ++g_failures;
 }
 
-// Axis-aligned rectangular cell (dx x dy) at (xc, yc). Faces: [0]j- [1]i+ [2]j+ [3]i-.
-static CellGeom cartesian_cell(double xc, double yc, double dx, double dy)
+// Least squares must reproduce grad of a linear field exactly, even on a badly
+// skewed, high-aspect-ratio stencil (where Green-Gauss would fail).
+static void test_least_squares_linear()
 {
-    CellGeom c;
-    c.xc = xc;
-    c.yc = yc;
-    c.area = dx * dy;
-
-    c.face[0] = FaceGeom{xc, yc - 0.5 * dy, 0.0, -1.0, dx, 0.0, -dx};
-    c.face[1] = FaceGeom{xc + 0.5 * dx, yc, 1.0, 0.0, dy, dy, 0.0};
-    c.face[2] = FaceGeom{xc, yc + 0.5 * dy, 0.0, 1.0, dx, 0.0, dx};
-    c.face[3] = FaceGeom{xc - 0.5 * dx, yc, -1.0, 0.0, dy, -dy, 0.0};
-
-    return c;
-}
-
-// Green-Gauss must reproduce grad of a linear field exactly.
-static void test_green_gauss_linear()
-{
-    std::printf("Test 1: Green-Gauss gradient of a linear field (exact)\n");
+    std::printf("Test 1: least-squares gradient of a linear field (exact)\n");
 
     const double a = 2.0, b = -3.0, cc = 5.0;
     auto phi = [&](double x, double y) { return a * x + b * y + cc; };
 
-    const double dx = 0.7, dy = 1.3;
-    const CellGeom cell = cartesian_cell(0.0, 0.0, dx, dy);
+    // Two nearly-radial neighbors (tiny x, big y) and two nearly-tangential
+    // ones (big x, tiny y): a stretched, skewed stencil like a wall cell's.
+    const double nx[4] = { 0.010, -0.008,  3.0, -2.5 };
+    const double ny[4] = { 1.700,  1.500,  0.02, -0.03 };
 
-    const double phi_c = phi(cell.xc, cell.yc);
+    double dx[4], dy[4], dphi[4];
+    for (int k = 0; k < 4; ++k) {
+        dx[k] = nx[k];
+        dy[k] = ny[k];
+        dphi[k] = phi(nx[k], ny[k]) - phi(0.0, 0.0);
+    }
 
-    double phi_nb[4];
-    phi_nb[0] = phi(0.0, -dy);
-    phi_nb[1] = phi(+dx, 0.0);
-    phi_nb[2] = phi(0.0, +dy);
-    phi_nb[3] = phi(-dx, 0.0);
+    const Vec2 g = least_squares_gradient(dx, dy, dphi, 4);
 
-    const Vec2 g = green_gauss_gradient(phi_c, phi_nb, cell);
-
-    check("d/dx", g.x, a, 1e-13);
-    check("d/dy", g.y, b, 1e-13);
+    check("d/dx", g.x, a, 1e-12);
+    check("d/dy", g.y, b, 1e-12);
 }
 
 // Corrected face gradient must recover a linear slope across a diagonally offset pair.
@@ -138,7 +124,7 @@ static void test_viscous_flux_conduction()
 
 int main()
 {
-    test_green_gauss_linear();
+    test_least_squares_linear();
     test_corrected_face_gradient();
     test_viscous_flux_couette();
     test_viscous_flux_conduction();

@@ -122,6 +122,9 @@ target_link_libraries(test_viscous PRIVATE aeroelastic_solver)
 add_executable(rans_solver_test test_cases/rans_solver_test.cpp)
 target_link_libraries(rans_solver_test PRIVATE aeroelastic_solver)
 
+add_executable(test_rans_gradients test_cases/test_rans_gradients.cpp)
+target_link_libraries(test_rans_gradients PRIVATE aeroelastic_solver)
+
 
 # =====================================================
 # Install

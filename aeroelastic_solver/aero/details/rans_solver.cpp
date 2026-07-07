@@ -6,24 +6,28 @@
 
 namespace rans {
 
-    Vec2 green_gauss_gradient(
-        double phi_center,
-        const double phi_neighbor[4],
-        const CellGeom& cell)
+    Vec2 least_squares_gradient(
+        const double dx[], const double dy[], const double dphi[], int n)
     {
-        Vec2 grad;
+        double a11 = 0.0, a12 = 0.0, a22 = 0.0, b1 = 0.0, b2 = 0.0;
 
-        for (int f = 0; f < 4; ++f) {
-            const FaceGeom& face = cell.face[f];
-            const double phi_face = 0.5 * (phi_center + phi_neighbor[f]);
-            grad.x += phi_face * face.sx;
-            grad.y += phi_face * face.sy;
+        for (int k = 0; k < n; ++k) {
+            const double w = 1.0 / (dx[k] * dx[k] + dy[k] * dy[k]);
+            a11 += w * dx[k] * dx[k];
+            a12 += w * dx[k] * dy[k];
+            a22 += w * dy[k] * dy[k];
+            b1  += w * dx[k] * dphi[k];
+            b2  += w * dy[k] * dphi[k];
         }
 
-        grad.x /= cell.area;
-        grad.y /= cell.area;
+        const double det = a11 * a22 - a12 * a12;
+        if (det == 0.0)
+            throw std::runtime_error("rans: degenerate least-squares stencil.");
 
-        return grad;
+        return Vec2{
+            ( a22 * b1 - a12 * b2) / det,
+            (-a12 * b1 + a11 * b2) / det
+        };
     }
 
     Vec2 corrected_face_gradient(
@@ -83,6 +87,47 @@ namespace rans {
     }
 
     // ------------------------------------------------------------------
+    // State conversions.
+    // ------------------------------------------------------------------
+
+    Primitive conserved_to_primitive(const Conserved& U)
+    {
+        if (U.rho <= 0.0)
+            throw std::runtime_error("rans: non-positive density.");
+
+        Primitive W;
+        W.rho = U.rho;
+        W.u = U.rhou / U.rho;
+        W.v = U.rhov / U.rho;
+
+        const double E = U.rhoE / U.rho;
+        W.p = (GAMMA - 1.0) * U.rho * (E - 0.5 * (W.u * W.u + W.v * W.v));
+
+        if (W.p <= 0.0)
+            throw std::runtime_error("rans: non-positive pressure.");
+
+        return W;
+    }
+
+    Conserved primitive_to_conserved(const Primitive& W)
+    {
+        const double E =
+            W.p / ((GAMMA - 1.0) * W.rho) + 0.5 * (W.u * W.u + W.v * W.v);
+
+        Conserved U;
+        U.rho = W.rho;
+        U.rhou = W.rho * W.u;
+        U.rhov = W.rho * W.v;
+        U.rhoE = W.rho * E;
+        return U;
+    }
+
+    double temperature(const Primitive& W)
+    {
+        return W.p / W.rho;
+    }
+
+    // ------------------------------------------------------------------
     // Phase B0: mesh handling.
     // ------------------------------------------------------------------
 
@@ -108,7 +153,12 @@ namespace rans {
         j_start_ = ng_;
         j_end_   = ng_ + nj_cells_;
 
-        geom_.resize(static_cast<size_t>(ni_total_) * nj_total_);
+        const size_t total = static_cast<size_t>(ni_total_) * nj_total_;
+        geom_.resize(total);
+        U_.resize(total);
+        grad_u_.resize(total);
+        grad_v_.resize(total);
+        grad_T_.resize(total);
 
         build_geometry(x_nodes, y_nodes);
     }
@@ -253,5 +303,65 @@ namespace rans {
         }
 
         return r;
+    }
+
+    // ------------------------------------------------------------------
+    // Phase B1: ghost filling + whole-field gradient pass.
+    // ------------------------------------------------------------------
+
+    void RansSolver::fill_ghost_cells()
+    {
+        // Periodic in i: copy the physical columns across the O-grid seam.
+        for (int j = j_start_; j < j_end_; ++j)
+            for (int g = 0; g < ng_; ++g) {
+                U_[idx(i_start_ - ng_ + g, j)] = U_[idx(i_end_ - ng_ + g, j)];
+                U_[idx(i_end_ + g, j)]         = U_[idx(i_start_ + g, j)];
+            }
+
+        // Zero-gradient in j at the wall and farfield, over the full padded
+        // width so corner ghosts are consistent.
+        for (int i = 0; i < ni_total_; ++i)
+            for (int g = 1; g <= ng_; ++g) {
+                U_[idx(i, j_start_ - g)]     = U_[idx(i, j_start_)];
+                U_[idx(i, j_end_ - 1 + g)]   = U_[idx(i, j_end_ - 1)];
+            }
+    }
+
+    void RansSolver::compute_gradients()
+    {
+        for (int j = j_start_; j < j_end_; ++j)
+            for (int i = i_start_; i < i_end_; ++i) {
+                const CellGeom& c = cell_geom(i, j);
+                const Primitive Wc = conserved_to_primitive(U_[idx(i, j)]);
+                const double Tc = temperature(Wc);
+
+                double dx[4], dy[4], du[4], dv[4], dT[4];
+                int n = 0;
+
+                // Gather real cell neighbors. i wraps periodically across the
+                // O-grid seam; j is one-sided at the wall / farfield (no ghost
+                // geometry needed -- least squares stays exact with 3 neighbors).
+                auto add = [&](int ni, int nj) {
+                    const CellGeom& nc = cell_geom(ni, nj);
+                    const Primitive Wn = conserved_to_primitive(U_[idx(ni, nj)]);
+                    dx[n] = nc.xc - c.xc;
+                    dy[n] = nc.yc - c.yc;
+                    du[n] = Wn.u - Wc.u;
+                    dv[n] = Wn.v - Wc.v;
+                    dT[n] = temperature(Wn) - Tc;
+                    ++n;
+                };
+
+                const int iL = (i == i_start_)     ? i_end_ - 1 : i - 1;
+                const int iR = (i == i_end_ - 1)    ? i_start_   : i + 1;
+                add(iL, j);
+                add(iR, j);
+                if (j > j_start_)     add(i, j - 1);
+                if (j < j_end_ - 1)   add(i, j + 1);
+
+                grad_u_[idx(i, j)] = least_squares_gradient(dx, dy, du, n);
+                grad_v_[idx(i, j)] = least_squares_gradient(dx, dy, dv, n);
+                grad_T_[idx(i, j)] = least_squares_gradient(dx, dy, dT, n);
+            }
     }
 }
