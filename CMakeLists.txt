@@ -110,6 +110,9 @@ target_link_libraries(test_vassberg_jameson_geometry PRIVATE aeroelastic_solver)
 add_executable(test_vassberg_jameson_mesh test_cases/test_vassberg_jameson_mesh.cpp)
 target_link_libraries(test_vassberg_jameson_mesh PRIVATE aeroelastic_solver)
 
+add_executable(test_rans_mesh test_cases/test_rans_mesh.cpp)
+target_link_libraries(test_rans_mesh PRIVATE aeroelastic_solver)
+
 add_executable(solver_test test_cases/solver_test.cpp)
 target_link_libraries(solver_test PRIVATE aeroelastic_solver)
 

@@ -1,6 +1,7 @@
 add_library(mesh
     details/euler_mesher.cpp
     details/VassbergJamesonMesher.cpp
+    details/RansMesher.cpp
 )
 
 # Expose public headers
