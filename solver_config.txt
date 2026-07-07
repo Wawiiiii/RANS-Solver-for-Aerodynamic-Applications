@@ -1,0 +1,41 @@
+# EulerSimulation config -- edit and re-run solver_test, no recompile needed.
+# Format: key = value   (# starts a comment; blank lines ignored)
+# Any key left out keeps its built-in default.
+
+# --- Mesh + multigrid hierarchy ---
+mesh_file = mesh_vj_1024x1024.dat
+n_levels  = 6
+
+# --- Flow --
+mach      = 0.5
+alpha_deg = 1.25
+
+# --- Convergence ---
+cfl             = 7.0
+max_cycles      = 50000
+print_every     = 200
+target_residual = 1.0e-6
+
+# --- JST artificial dissipation (finest level) ---
+k2 = 0.25
+k4 = 0.0078125
+
+# --- Multigrid smoothing sweeps per cycle ---
+n_pre    = 1
+n_coarse = 2
+n_post   = 1
+
+# --- Cycle stabilizers ---
+correction_omega = 0.5
+omega_decay      = 0.75
+coarse_cfl_decay = 0.65
+bilinear_prolong = true
+cycle_gamma      = 2          # 1 = V-cycle, 2 = W-cycle
+
+# --- Full Multigrid start-up ---
+use_fmg      = true
+n_fmg_cycles = 50
+
+# --- Output files (leave empty to skip) ---
+flowfield_file  = flowfield_rk5_vj_multi.dat
+surface_cp_file = surface_cp_rk5_jst_vj_multi.dat
