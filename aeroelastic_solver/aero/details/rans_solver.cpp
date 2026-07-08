@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 
 namespace rans {
@@ -887,6 +888,107 @@ namespace rans {
         add_interior_viscous_residual(mu, conductivity); 
         add_wall_viscous_residual(mu, conductivity); 
 
+    }
+
+    void RansSolver::set_uniform_state(const Primitive& W)
+    {
+        const Conserved U = primitive_to_conserved(W);
+
+        for (int j = j_start_; j < j_end_; ++j) {
+            for (int i = i_start_; i < i_end_; ++i) {
+                state(i, j) = U;
+            }
+        }
+
+        fill_ghost_cells();
+    }
+
+    double RansSolver::local_time_step(
+        int i,
+        int j,
+        double cfl,
+        double mu) const
+    {
+        if (cfl <= 0.0)
+            throw std::runtime_error("RANS: CFL must be positive.");
+
+        if (mu < 0.0)
+            throw std::runtime_error("RANS: viscosity must be non-negative.");
+
+        const CellGeom& c = cell_geom(i, j);
+        const Primitive W = conserved_to_primitive(state(i, j));
+        const double a = sound_speed(W);
+
+        double spectral_sum = 0.0;
+
+        for (int f = 0; f < 4; ++f) {
+            const FaceGeom& face = c.face[f];
+            const double un = W.u * face.nx + W.v * face.ny;
+            spectral_sum += (std::abs(un) + a) * face.length;
+        }
+
+        const double nu = mu / W.rho;
+        for (int f = 0; f < 4; ++f) {
+            const FaceGeom& face = c.face[f];
+            spectral_sum += 2.0 * nu * face.length * face.length / c.area;
+        }
+
+        if (spectral_sum <= 0.0)
+            throw std::runtime_error("RANS: non-positive spectral sum in local_time_step.");
+
+        return cfl * c.area / spectral_sum;
+    }
+
+    std::vector<double> RansSolver::compute_local_time_steps(
+        double cfl,
+        double mu) const
+    {
+        std::vector<double> dt(
+            static_cast<size_t>(ni_total_) * static_cast<size_t>(nj_total_),
+            0.0);
+
+        for (int j = j_start_; j < j_end_; ++j) {
+            for (int i = i_start_; i < i_end_; ++i) {
+                dt[idx(i, j)] = local_time_step(i, j, cfl, mu);
+            }
+        }
+
+        return dt;
+    }
+
+    void RansSolver::rk5_pseudo_step(
+        const Primitive& Winf,
+        double mu,
+        double conductivity,
+        double cfl)
+    {
+        static const std::array<double, 5> alpha{
+            1.0 / 4.0,
+            1.0 / 6.0,
+            3.0 / 8.0,
+            1.0 / 2.0,
+            1.0
+        };
+
+        const std::vector<Conserved> U0 = U_;
+        const std::vector<double> dt = compute_local_time_steps(cfl, mu);
+
+        for (double a_stage : alpha) {
+            compute_full_meanflow_residual(Winf, mu, conductivity);
+
+            for (int j = j_start_; j < j_end_; ++j) {
+                for (int i = i_start_; i < i_end_; ++i) {
+                    const int id = idx(i, j);
+                    U_[id] = U0[id] - a_stage * dt[id] * R_[id];
+
+                    const Primitive Wnew = conserved_to_primitive(U_[id]);
+                    if (!is_physical(Wnew))
+                        throw std::runtime_error("RANS: non-physical state after RK5 pseudo-step.");
+                }
+            }
+
+            fill_ghost_cells();
+        }
     }
 
 }

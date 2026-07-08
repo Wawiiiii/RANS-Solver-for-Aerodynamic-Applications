@@ -153,6 +153,11 @@ namespace rans {
 
         void compute_full_meanflow_residual(const Primitive& Winf, double mu, double conductivity); 
 
+        void set_uniform_state(const Primitive& W);
+        double local_time_step(int i, int j, double cfl, double mu) const;
+        std::vector<double> compute_local_time_steps(double cfl, double mu) const;
+        void rk5_pseudo_step(const Primitive& Winf, double mu, double conductivity, double cfl);
+
 
     private:
         void validate_grid(
