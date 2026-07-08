@@ -293,6 +293,87 @@ static void test_interior_viscous_residual()
     }
 }
 
+
+static double max_abs_residual_difference(
+    const rans::RansSolver& a,
+    const rans::RansSolver& b)
+{
+    double max_diff = 0.0;
+    for (int j = a.j_start(); j < a.j_end(); ++j) {
+        for (int i = a.i_start(); i < a.i_end(); ++i) {
+            const rans::Conserved& ra = a.residual(i, j);
+            const rans::Conserved& rb = b.residual(i, j);
+            max_diff = std::max(max_diff, std::fabs(ra.rho  - rb.rho));
+            max_diff = std::max(max_diff, std::fabs(ra.rhou - rb.rhou));
+            max_diff = std::max(max_diff, std::fabs(ra.rhov - rb.rhov));
+            max_diff = std::max(max_diff, std::fabs(ra.rhoE - rb.rhoE));
+        }
+    }
+    return max_diff;
+}
+
+static void populate_meanflow_state(rans::RansSolver& solver)
+{
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const rans::CellGeom& c = solver.cell_geom(i, j);
+
+            rans::Primitive W;
+            W.rho = 1.0 + 0.02 * c.xc + 0.01 * c.yc;
+            W.u = 0.25 + 0.03 * c.xc - 0.01 * c.yc;
+            W.v = -0.08 + 0.02 * c.xc + 0.025 * c.yc;
+            W.p = 0.9 + 0.015 * c.xc + 0.02 * c.yc;
+
+            solver.state(i, j) = rans::primitive_to_conserved(W);
+        }
+    }
+}
+
+static void test_full_meanflow_residual_composition()
+{
+    std::printf("Full mean-flow residual composition checks:\n");
+
+    const int nt = 8;
+    const int nr = 7;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i) + 0.05 * static_cast<double>(j);
+            y[id] = static_cast<double>(j) + 0.02 * static_cast<double>(i);
+        }
+    }
+
+    const rans::Primitive Winf{1.05, 0.18, -0.03, 0.95};
+    const double mu = 0.012;
+    const double conductivity = 0.018;
+
+    rans::RansSolver full(x, y, nt, nr);
+    rans::RansSolver split(x, y, nt, nr);
+    rans::RansSolver inviscid(x, y, nt, nr);
+
+    populate_meanflow_state(full);
+    populate_meanflow_state(split);
+    populate_meanflow_state(inviscid);
+
+    full.compute_full_meanflow_residual(Winf, mu, conductivity);
+
+    split.compute_full_convective_residual(Winf);
+    split.add_interior_viscous_residual(mu, conductivity);
+
+    inviscid.compute_full_meanflow_residual(Winf, 0.0, 0.0);
+
+    check_positive("full meanflow nonzero", full.residual_linf_current());
+    check_close("full equals split assembly",
+                max_abs_residual_difference(full, split), 0.0, 1e-13);
+
+    split.compute_full_convective_residual(Winf);
+    check_close("zero transport is inviscid",
+                max_abs_residual_difference(inviscid, split), 0.0, 1e-13);
+}
+
 static void report_geometry(const mesh::RansMeshParams& p)
 {
     const mesh::Mesh2D m = mesh::RansMesher::generate(p);
@@ -367,6 +448,8 @@ int main()
     test_full_convective_residual_boundaries();
     std::printf("\n");
     test_interior_viscous_residual();
+    std::printf("\n");
+    test_full_meanflow_residual_composition();
     std::printf("\n");
 
     // Production-resolution geometry checks.
