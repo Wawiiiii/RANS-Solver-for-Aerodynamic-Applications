@@ -147,6 +147,10 @@ namespace rans {
         void add_farfield_convective_residual(const Primitive& Winf);
         void compute_full_convective_residual(const Primitive& Winf);
 
+        // viscous contribution
+        void add_interior_viscous_residual(double mu, double conductivity); 
+        void compute_full_meanflow_residual(const Primitive& Winf, double mu, double conductivity); 
+
 
     private:
         void validate_grid(

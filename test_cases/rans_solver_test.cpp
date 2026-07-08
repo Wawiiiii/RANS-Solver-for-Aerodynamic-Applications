@@ -221,6 +221,78 @@ static void test_full_convective_residual_boundaries()
     check_positive("full residual nonzero", solver.residual_linf_current());
 }
 
+static void test_interior_viscous_residual()
+{
+    std::printf("Interior viscous residual checks:\n");
+
+    const int nt = 7;
+    const int nr = 6;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    const double mu = 0.01;
+    const double conductivity = 0.02;
+
+    {
+        rans::RansSolver solver(x, y, nt, nr);
+        const rans::Primitive W{1.0, 0.25, -0.1, 1.0};
+        const rans::Conserved U = rans::primitive_to_conserved(W);
+
+        for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+            for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+                solver.state(i, j) = U;
+            }
+        }
+
+        solver.zero_residual();
+        solver.add_interior_viscous_residual(mu, conductivity);
+        check_close("uniform viscous residual", solver.residual_linf_current(), 0.0, 1e-13);
+    }
+
+    {
+        rans::RansSolver solver(x, y, nt, nr);
+
+        for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+            for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+                const rans::CellGeom& c = solver.cell_geom(i, j);
+
+                rans::Primitive W;
+                W.rho = 1.0;
+                W.u = 0.2 + 0.03 * c.yc;
+                W.v = -0.1 + 0.02 * c.xc;
+                W.p = 1.0 + 0.01 * c.xc + 0.02 * c.yc;
+
+                solver.state(i, j) = rans::primitive_to_conserved(W);
+            }
+        }
+
+        solver.zero_residual();
+        solver.add_interior_viscous_residual(mu, conductivity);
+        check_positive("nontrivial viscous residual", solver.residual_linf_current());
+
+        rans::Conserved integrated;
+        for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+            for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+                const double area = solver.cell_geom(i, j).area;
+                integrated = integrated + area * solver.residual(i, j);
+            }
+        }
+
+        check_close("viscous integrated rho",  integrated.rho,  0.0, 1e-13);
+        check_close("viscous integrated rhou", integrated.rhou, 0.0, 1e-13);
+        check_close("viscous integrated rhov", integrated.rhov, 0.0, 1e-13);
+        check_close("viscous integrated rhoE", integrated.rhoE, 0.0, 1e-13);
+    }
+}
+
 static void report_geometry(const mesh::RansMeshParams& p)
 {
     const mesh::Mesh2D m = mesh::RansMesher::generate(p);
@@ -293,6 +365,8 @@ int main()
     test_convective_residual_conservation();
     std::printf("\n");
     test_full_convective_residual_boundaries();
+    std::printf("\n");
+    test_interior_viscous_residual();
     std::printf("\n");
 
     // Production-resolution geometry checks.

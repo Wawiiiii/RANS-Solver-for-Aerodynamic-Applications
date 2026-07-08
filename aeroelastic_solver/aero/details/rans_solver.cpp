@@ -709,4 +709,106 @@ namespace rans {
 
     }
 
+    void RansSolver::add_interior_viscous_residual(double mu, double conductivity){ 
+
+        if (mu < 0.0) { 
+
+            throw std::runtime_error("RANS: Viscosity must be non-negative"); 
+        }
+
+        if (conductivity < 0.0) { 
+
+            throw std::runtime_error("RANS: Conductivity must be non-negative"); 
+        }
+
+        compute_gradients(); 
+
+        // i-direction faces: periodic around the O-grid. 
+
+        for (int j =j_start_; j < j_end_; j++) { 
+
+            for (int i = i_start_; i < i_end_; i++) { 
+
+                const int iL = i; 
+                const int iR = (i == i_end_ - 1 ) ? i_start_ : i + 1; 
+
+                const CellGeom& cL = cell_geom(iL, j); 
+                const CellGeom& cR = cell_geom(iR, j); 
+                const FaceGeom& face = cL.face[1]; 
+
+                const Primitive WL = conserved_to_primitive(state(iL, j)); 
+                const Primitive WR = conserved_to_primitive(state(iR, j));
+
+                // temperatures
+                const double TL = temperature(WL); 
+                const double TR = temperature(WR); 
+
+                // gradients
+
+                const double dx = cR.xc - cL.xc; 
+                const double dy = cR.yc - cL.yc; 
+
+                const Vec2 gu = corrected_face_gradient(grad_u(iL, j), grad_u(iR, j), WL.u, WR.u, dx, dy); 
+                const Vec2 gv = corrected_face_gradient(grad_v(iL, j), grad_v(iR, j), WL.v, WR.v, dx, dy); 
+                const Vec2 gT = corrected_face_gradient(grad_T(iL, j), grad_T(iR, j), TL, TR, dx, dy); 
+
+                const double u_face = 0.5 * (WL.u + WR.u); 
+                const double v_face = 0.5 * (WL.v + WR.v);
+
+                const Conserved Fv = viscous_normal_flux(gu, gv, gT, u_face, v_face, mu, conductivity, face.nx, face.ny); 
+
+                residual(iL, j) = residual(iL, j) - Fv * (face.length / cL.area); 
+                residual(iR, j) = residual(iR, j) + Fv * (face.length / cR.area); 
+                
+            }
+        }
+
+        // j-direction interior faces: wall normal direction, no periodicitiy
+
+        for (int j = j_start_; j < j_end_ - 1; j++) { 
+
+            for (int i = i_start_; i < i_end_; i++) { 
+
+                const int jB = j;
+                const int jT = j + 1; 
+
+                const CellGeom& cB = cell_geom(i, jB); 
+                const CellGeom& cT = cell_geom(i, jT); 
+                const FaceGeom& face = cB.face[2]; 
+
+                const Primitive WB = conserved_to_primitive(state(i, jB)); 
+                const Primitive WT = conserved_to_primitive(state(i, jT)); 
+
+                // temperatures
+                
+                const double TB = temperature(WB); 
+                const double TT = temperature(WT); 
+
+                // gradients
+
+                const double dx = cT.xc - cB.xc;
+                const double dy = cT.yc - cB.yc; 
+
+                const Vec2 gu = corrected_face_gradient(grad_u(i, jB), grad_u(i, jT), WB.u, WT.u, dx, dy); 
+                const Vec2 gv = corrected_face_gradient(grad_v(i, jB), grad_v(i, jT), WB.v, WT.v, dx, dy);
+                const Vec2 gT = corrected_face_gradient(grad_T(i, jB), grad_T(i, jT), TB, TT, dx, dy); 
+
+                const double u_face = 0.5 * (WB.u + WT.u); 
+                const double v_face = 0.5 * (WB.v + WT.v);
+
+                const Conserved Fv = viscous_normal_flux(gu, gv, gT, u_face, v_face, mu, conductivity, face.nx, face.ny);
+                residual(i, jB) = residual(i, jB) - Fv * (face.length / cB.area); 
+                residual(i, jT) = residual(i, jT) + Fv * (face.length / cT.area); 
+
+            }
+        }
+    }
+
+    void RansSolver::compute_full_meanflow_residual(const Primitive& Winf, double mu, double conductivity) { 
+
+        compute_full_convective_residual(Winf); 
+        add_interior_viscous_residual(mu, conductivity); 
+
+    }
+
 }
