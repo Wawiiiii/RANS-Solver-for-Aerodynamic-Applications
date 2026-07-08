@@ -66,6 +66,13 @@ namespace rans {
     double sound_speed(const Primitive& W);
     double temperature(const Primitive& W); // p/rho (R = 1 nondimensionalization)
 
+    // Conserved-vector arithmetic
+    Conserved operator+(const Conserved& a, const Conserved& b); 
+    Conserved operator-(const Conserved& a, const Conserved& b);
+    Conserved operator*(double s, const Conserved& a); 
+    Conserved operator*(const Conserved& a, double s); 
+
+
     // --- convective / inviscid mean-flow flux atoms ---
     Conserved normal_flux(const Conserved& U, double nx, double ny);
     Conserved central_flux(const Conserved& UL, const Conserved& UR, double nx, double ny);
@@ -117,13 +124,21 @@ namespace rans {
         // wall/farfield BCs land).
         void fill_ghost_cells();
 
-        // Cell-centered gradients of u, v, T over all interior cells (Green-Gauss).
+        // Cell-centered gradients of u, v, T over all interior cells (least-squares).
         // Call fill_ghost_cells() first.
         void compute_gradients();
 
         const Vec2& grad_u(int i, int j) const { return grad_u_[idx(i, j)]; }
         const Vec2& grad_v(int i, int j) const { return grad_v_[idx(i, j)]; }
         const Vec2& grad_T(int i, int j) const { return grad_T_[idx(i, j)]; }
+
+        const Conserved& residual(int i, int j) const { return R_[idx(i, j)]; } 
+        Conserved& residual(int i, int j) { return R_[idx(i, j)]; }
+
+        void zero_residual(); 
+        void compute_convective_residual(); 
+        double residual_linf_current() const; 
+
 
     private:
         void validate_grid(
@@ -154,5 +169,7 @@ namespace rans {
         std::vector<CellGeom> geom_;
         std::vector<Conserved> U_;                  // conserved state (ghost-padded)
         std::vector<Vec2> grad_u_, grad_v_, grad_T_; // cell-centered gradients
+
+        std::vector<Conserved> R_; // mean-flow Residual
     };
 }

@@ -219,6 +219,7 @@ namespace rans {
         grad_u_.resize(total);
         grad_v_.resize(total);
         grad_T_.resize(total);
+        R_.resize(total);
 
         build_geometry(x_nodes, y_nodes);
     }
@@ -424,4 +425,130 @@ namespace rans {
                 grad_T_[idx(i, j)] = least_squares_gradient(dx, dy, dT, n);
             }
     }
+
+
+    Conserved operator+(const Conserved& a, const Conserved& b) {
+        return Conserved{
+            a.rho  + b.rho,
+            a.rhou + b.rhou,
+            a.rhov + b.rhov,
+            a.rhoE + b.rhoE
+        };
+    }
+
+    Conserved operator-(const Conserved& a, const Conserved& b) {
+        return Conserved{
+            a.rho  - b.rho,
+            a.rhou - b.rhou,
+            a.rhov - b.rhov,
+            a.rhoE - b.rhoE
+        };
+    }
+
+    Conserved operator*(double s, const Conserved& a) {
+        return Conserved{
+            s * a.rho,
+            s * a.rhou,
+            s * a.rhov,
+            s * a.rhoE
+        };
+    }
+
+    Conserved operator*(const Conserved& a, double s) {
+        return s * a;
+    }
+
+    // Residual Zeroing
+
+    void RansSolver::zero_residual() { 
+
+        for (auto& r : R_) { 
+
+            r = Conserved{}; 
+
+        }
+
+    }
+
+    void RansSolver::compute_convective_residual() { 
+
+        zero_residual(); 
+        fill_ghost_cells(); 
+
+        // i-direction faces: periodic around the o-grid
+
+        for (int j = j_start_; j < j_end_; j++) { 
+
+            for (int i = i_start_; i < i_end_; i++) { 
+
+                const int iL = i; 
+
+                const int iR_physical = (i == i_end_ - 1) ? i_start_ : i + 1; 
+
+                const CellGeom& cL = cell_geom(iL, j); // left cell
+                const CellGeom& cR = cell_geom(iR_physical, j); // right cell
+                const FaceGeom& face = cL.face[1]; // i+ face of the left cell
+
+                const Conserved& UL = state(iL, j); 
+                const Conserved& UR = state(iR_physical, j); 
+
+                const Conserved F = central_flux(UL, UR, face.nx, face.ny); 
+
+                residual(iL, j) = residual(iL, j) + F * (face.length / cL.area); 
+                residual(iR_physical, j) = residual(iR_physical, j) - F * (face.length / cR.area); 
+
+            }
+        }
+
+        // j-direction interior faces: wall-normal direction, no periodicity
+
+        for (int j = j_start_; j < j_end_ - 1; j++) { 
+
+            for (int i = i_start_; i < i_end_; i++) { 
+
+                const int jB = j; 
+                const int jT = j + 1; 
+
+                const CellGeom& cB = cell_geom(i, jB); // bottom cell
+                const CellGeom& cT = cell_geom(i, jT); // top cell
+                const FaceGeom& face = cB.face[2]; // j+ face of bottom cell
+
+                const Conserved& UB = state(i, jB); 
+                const Conserved& UT = state(i, jT); 
+
+                const Conserved F = central_flux(UB, UT, face.nx, face.ny); 
+
+                residual(i, jB) = residual(i, jB) + F * (face.length / cB.area); 
+                residual(i, jT) = residual(i, jT) - F * (face.length / cT.area); 
+
+            }
+            
+        }
+ 
+    }
+
+    double RansSolver::residual_linf_current() const { 
+
+        double max_value = 0.0; 
+
+        for (int j = j_start_; j< j_end_; j ++) { 
+
+            for (int i = i_start_; i < i_end_; i++) { 
+
+                const Conserved& r = residual(i, j); 
+
+                max_value = std::max(max_value, std::fabs(r.rho));
+                max_value = std::max(max_value, std::fabs(r.rhou));
+                max_value = std::max(max_value, std::fabs(r.rhov));
+                max_value = std::max(max_value, std::fabs(r.rhoE));
+
+            }
+
+        }
+        
+        return max_value; 
+
+    }
+
+
 }

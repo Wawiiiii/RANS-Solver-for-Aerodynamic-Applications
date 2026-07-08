@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <string>
+#include <vector>
 
 static int g_failures = 0;
 
@@ -19,6 +20,14 @@ static void check_close(const std::string& name, double got, double want, double
     const bool ok = err <= tol;
     std::printf("  [%s] %-28s got % .6e  want % .6e  err %.2e\n",
                 ok ? "PASS" : "FAIL", name.c_str(), got, want, err);
+    if (!ok) ++g_failures;
+}
+
+static void check_positive(const std::string& name, double got)
+{
+    const bool ok = got > 0.0;
+    std::printf("  [%s] %-28s got % .6e\n",
+                ok ? "PASS" : "FAIL", name.c_str(), got);
     if (!ok) ++g_failures;
 }
 
@@ -55,6 +64,56 @@ static void test_convective_flux_atoms()
     check_close("face spectral radius",
                 rans::face_spectral_radius(UL, UR, nx, ny),
                 want_lambda, 1e-14);
+}
+
+static void test_convective_residual_conservation()
+{
+    std::printf("Convective residual assembly checks:\n");
+
+    const int nt = 7;
+    const int nr = 6;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    rans::RansSolver solver(x, y, nt, nr);
+
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const rans::CellGeom& c = solver.cell_geom(i, j);
+
+            rans::Primitive W;
+            W.rho = 1.0 + 0.01 * c.xc + 0.02 * c.yc;
+            W.u = 0.3 + 0.02 * c.xc;
+            W.v = -0.1 + 0.03 * c.yc;
+            W.p = 0.8 + 0.01 * c.xc;
+
+            solver.state(i, j) = rans::primitive_to_conserved(W);
+        }
+    }
+
+    solver.compute_convective_residual();
+    check_positive("nontrivial residual", solver.residual_linf_current());
+
+    rans::Conserved integrated;
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const double area = solver.cell_geom(i, j).area;
+            integrated = integrated + area * solver.residual(i, j);
+        }
+    }
+
+    check_close("integrated rho residual",  integrated.rho,  0.0, 1e-12);
+    check_close("integrated rhou residual", integrated.rhou, 0.0, 1e-12);
+    check_close("integrated rhov residual", integrated.rhov, 0.0, 1e-12);
+    check_close("integrated rhoE residual", integrated.rhoE, 0.0, 1e-12);
 }
 
 static void report_geometry(const mesh::RansMeshParams& p)
@@ -123,6 +182,8 @@ static void dump_for_visualization(const mesh::RansMeshParams& p)
 int main()
 {
     test_convective_flux_atoms();
+    std::printf("\n");
+    test_convective_residual_conservation();
     std::printf("\n");
 
     // Production-resolution geometry checks.
