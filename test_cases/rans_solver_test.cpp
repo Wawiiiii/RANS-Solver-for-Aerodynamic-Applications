@@ -5,10 +5,57 @@
 #include "rans_solver.h"
 #include "RansMesher.h"
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <string>
+
+static int g_failures = 0;
+
+static void check_close(const std::string& name, double got, double want, double tol)
+{
+    const double err = std::fabs(got - want);
+    const bool ok = err <= tol;
+    std::printf("  [%s] %-28s got % .6e  want % .6e  err %.2e\n",
+                ok ? "PASS" : "FAIL", name.c_str(), got, want, err);
+    if (!ok) ++g_failures;
+}
+
+static void test_convective_flux_atoms()
+{
+    std::printf("Convective flux atom checks:\n");
+
+    const rans::Primitive WL{1.2, 0.7, -0.2, 0.9};
+    const rans::Primitive WR{0.8, -0.1, 0.5, 0.6};
+    const rans::Conserved UL = rans::primitive_to_conserved(WL);
+    const rans::Conserved UR = rans::primitive_to_conserved(WR);
+
+    const double nx = 0.6;
+    const double ny = 0.8;
+    const double unL = WL.u * nx + WL.v * ny;
+
+    const rans::Conserved FL = rans::normal_flux(UL, nx, ny);
+    check_close("normal rho flux",  FL.rho,  WL.rho * unL, 1e-14);
+    check_close("normal rhou flux", FL.rhou, WL.rho * WL.u * unL + WL.p * nx, 1e-14);
+    check_close("normal rhov flux", FL.rhov, WL.rho * WL.v * unL + WL.p * ny, 1e-14);
+    check_close("normal rhoE flux", FL.rhoE, (UL.rhoE + WL.p) * unL, 1e-14);
+
+    const rans::Conserved FR = rans::normal_flux(UR, nx, ny);
+    const rans::Conserved Fc = rans::central_flux(UL, UR, nx, ny);
+    check_close("central rho flux",  Fc.rho,  0.5 * (FL.rho  + FR.rho),  1e-14);
+    check_close("central rhou flux", Fc.rhou, 0.5 * (FL.rhou + FR.rhou), 1e-14);
+    check_close("central rhov flux", Fc.rhov, 0.5 * (FL.rhov + FR.rhov), 1e-14);
+    check_close("central rhoE flux", Fc.rhoE, 0.5 * (FL.rhoE + FR.rhoE), 1e-14);
+
+    const double unR = WR.u * nx + WR.v * ny;
+    const double want_lambda = 0.5 * (
+        std::fabs(unL) + std::sqrt(rans::GAMMA * WL.p / WL.rho) +
+        std::fabs(unR) + std::sqrt(rans::GAMMA * WR.p / WR.rho));
+    check_close("face spectral radius",
+                rans::face_spectral_radius(UL, UR, nx, ny),
+                want_lambda, 1e-14);
+}
 
 static void report_geometry(const mesh::RansMeshParams& p)
 {
@@ -27,6 +74,11 @@ static void report_geometry(const mesh::RansMeshParams& p)
     std::printf("  max |n|-1          : %.3e\n", g.max_unit_normal_error);
     std::printf("  inverted cells     : %d  %s\n",
                 g.inverted_cells, g.inverted_cells == 0 ? "(OK)" : "(BAD)");
+
+    if (g.inverted_cells != 0) ++g_failures;
+    if (g.min_area <= 0.0) ++g_failures;
+    if (g.min_face <= 0.0) ++g_failures;
+    if (g.max_unit_normal_error > 1e-12) ++g_failures;
 }
 
 // Dump the coarse mesh nodes ("i j x y") and every interior cell's four face
@@ -70,6 +122,9 @@ static void dump_for_visualization(const mesh::RansMeshParams& p)
 
 int main()
 {
+    test_convective_flux_atoms();
+    std::printf("\n");
+
     // Production-resolution geometry checks.
     {
         mesh::RansMeshParams p;
@@ -96,5 +151,8 @@ int main()
         dump_for_visualization(p);
     }
 
-    return 0;
+    std::printf("\n%s (%d failure%s)\n",
+                g_failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED",
+                g_failures, g_failures == 1 ? "" : "s");
+    return g_failures == 0 ? 0 : 1;
 }

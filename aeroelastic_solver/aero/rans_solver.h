@@ -60,9 +60,16 @@ namespace rans {
         double nx, double ny);
 
     // --- state conversions ---
+    bool is_physical(const Primitive& W);
     Primitive conserved_to_primitive(const Conserved& U);
     Conserved primitive_to_conserved(const Primitive& W);
+    double sound_speed(const Primitive& W);
     double temperature(const Primitive& W); // p/rho (R = 1 nondimensionalization)
+
+    // --- convective / inviscid mean-flow flux atoms ---
+    Conserved normal_flux(const Conserved& U, double nx, double ny);
+    Conserved central_flux(const Conserved& UL, const Conserved& UR, double nx, double ny);
+    double face_spectral_radius(const Conserved& UL, const Conserved& UR, double nx, double ny);
 
     // --- solver skeleton: mesh handling (Phase B0) ---
 

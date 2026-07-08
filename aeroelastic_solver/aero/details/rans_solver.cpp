@@ -90,6 +90,11 @@ namespace rans {
     // State conversions.
     // ------------------------------------------------------------------
 
+    bool is_physical(const Primitive& W)
+    {
+        return W.rho > 0.0 && W.p > 0.0;
+    }
+
     Primitive conserved_to_primitive(const Conserved& U)
     {
         if (U.rho <= 0.0)
@@ -111,6 +116,9 @@ namespace rans {
 
     Conserved primitive_to_conserved(const Primitive& W)
     {
+        if (!is_physical(W))
+            throw std::runtime_error("rans: non-physical primitive state.");
+
         const double E =
             W.p / ((GAMMA - 1.0) * W.rho) + 0.5 * (W.u * W.u + W.v * W.v);
 
@@ -122,9 +130,61 @@ namespace rans {
         return U;
     }
 
+    double sound_speed(const Primitive& W)
+    {
+        if (!is_physical(W))
+            throw std::runtime_error("rans: non-physical primitive state in sound_speed.");
+
+        return std::sqrt(GAMMA * W.p / W.rho);
+    }
+
     double temperature(const Primitive& W)
     {
         return W.p / W.rho;
+    }
+
+    // ------------------------------------------------------------------
+    // Convective / inviscid mean-flow flux atoms.
+    // ------------------------------------------------------------------
+
+    Conserved normal_flux(const Conserved& U, double nx, double ny)
+    {
+        const Primitive W = conserved_to_primitive(U);
+
+        const double un = W.u * nx + W.v * ny;
+
+        Conserved F;
+        F.rho  = W.rho * un;
+        F.rhou = W.rho * W.u * un + W.p * nx;
+        F.rhov = W.rho * W.v * un + W.p * ny;
+        F.rhoE = (U.rhoE + W.p) * un;
+        return F;
+    }
+
+    Conserved central_flux(const Conserved& UL, const Conserved& UR, double nx, double ny)
+    {
+        const Conserved FL = normal_flux(UL, nx, ny);
+        const Conserved FR = normal_flux(UR, nx, ny);
+
+        Conserved F;
+        F.rho  = 0.5 * (FL.rho  + FR.rho);
+        F.rhou = 0.5 * (FL.rhou + FR.rhou);
+        F.rhov = 0.5 * (FL.rhov + FR.rhov);
+        F.rhoE = 0.5 * (FL.rhoE + FR.rhoE);
+        return F;
+    }
+
+    double face_spectral_radius(const Conserved& UL, const Conserved& UR, double nx, double ny)
+    {
+        const Primitive WL = conserved_to_primitive(UL);
+        const Primitive WR = conserved_to_primitive(UR);
+
+        const double unL = WL.u * nx + WL.v * ny;
+        const double unR = WR.u * nx + WR.v * ny;
+
+        return 0.5 * (
+            std::abs(unL) + sound_speed(WL) +
+            std::abs(unR) + sound_speed(WR));
     }
 
     // ------------------------------------------------------------------
