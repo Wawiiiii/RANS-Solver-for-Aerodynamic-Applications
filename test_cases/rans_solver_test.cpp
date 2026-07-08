@@ -293,6 +293,68 @@ static void test_interior_viscous_residual()
     }
 }
 
+static void test_wall_viscous_residual()
+{
+    std::printf("Wall viscous residual checks:\n");
+
+    const int nt = 5;
+    const int nr = 4;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    const double mu = 0.01;
+    const double conductivity = 0.02;
+
+    {
+        rans::RansSolver solver(x, y, nt, nr);
+        const rans::Primitive W{1.0, 0.0, 0.0, 1.0};
+        const rans::Conserved U = rans::primitive_to_conserved(W);
+
+        for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+            for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+                solver.state(i, j) = U;
+            }
+        }
+
+        solver.zero_residual();
+        solver.add_wall_viscous_residual(mu, conductivity);
+        check_close("zero-velocity wall viscous", solver.residual_linf_current(), 0.0, 1e-14);
+    }
+
+    {
+        rans::RansSolver solver(x, y, nt, nr);
+        const rans::Primitive W{1.0, 1.0, 0.0, 1.0};
+        const rans::Conserved U = rans::primitive_to_conserved(W);
+
+        for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+            for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+                solver.state(i, j) = U;
+            }
+        }
+
+        solver.zero_residual();
+        solver.add_wall_viscous_residual(mu, conductivity);
+
+        const int i = solver.i_start();
+        const int j = solver.j_start();
+
+        // Cartesian unit cells: wall distance = 0.5, bottom normal = (0,-1).
+        // du/dn = 1 / 0.5 = 2, tau_xy = mu * du/dy = 2*mu,
+        // Fv_x = tau_xy*n_y = -2*mu, residual subtracts Fv => +2*mu.
+        check_close("wall shear rhou", solver.residual(i, j).rhou, 2.0 * mu, 1e-14);
+        check_close("wall shear rho",  solver.residual(i, j).rho,  0.0, 1e-14);
+        check_close("wall shear rhov", solver.residual(i, j).rhov, 0.0, 1e-14);
+    }
+}
+
 static void report_geometry(const mesh::RansMeshParams& p)
 {
     const mesh::Mesh2D m = mesh::RansMesher::generate(p);
@@ -367,6 +429,8 @@ int main()
     test_full_convective_residual_boundaries();
     std::printf("\n");
     test_interior_viscous_residual();
+    std::printf("\n");
+    test_wall_viscous_residual();
     std::printf("\n");
 
     // Production-resolution geometry checks.

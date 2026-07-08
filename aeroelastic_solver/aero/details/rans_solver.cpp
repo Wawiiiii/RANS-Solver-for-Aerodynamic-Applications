@@ -804,10 +804,88 @@ namespace rans {
         }
     }
 
+    void RansSolver::add_wall_viscous_residual(double mu, double conductivity) { 
+
+        if (mu < 0.0) { 
+
+            throw std::runtime_error("RANS: Viscosity must be non-negative"); 
+
+        }
+
+        if (conductivity < 0.0) { 
+
+            throw std::runtime_error("RANS: Conductivity must be non-negative"); 
+
+        }
+
+        const int j = j_start_; 
+
+        for (int i = i_start_; i < i_end_; i++) { 
+
+            const CellGeom& c = cell_geom(i, j); 
+            const FaceGeom& face = c.face[0]; 
+
+            const Primitive Wc = conserved_to_primitive(state(i, j)); 
+
+            const double dx = c.xc - face.xc; 
+            const double dy = c.yc - face.yc; 
+            const double d = std::sqrt(dx*dx + dy*dy); 
+
+            if (d <= 0.0) { 
+
+                throw std::runtime_error("RANS: Zero wall distance in add_wall_viscous_residual"); 
+
+            }
+
+            /* 
+            
+            No slip wall: 
+                u_wall = 0
+                v_wall = 0
+
+            Adiabatic wall: 
+
+                dT/dn = 0
+            
+            Approximation: 
+                Only the wall normal part of the velocity gradient is imposed here. Direction is froim wall face to cell center. 
+            */
+
+            const double ex = dx/d; 
+            const double ey = dy/d; 
+
+            const double du_dn = Wc.u / d; 
+            const double dv_dn = Wc.v / d; 
+
+            Vec2 grad_u_wall; 
+            Vec2 grad_v_wall;
+            Vec2 grad_T_wall; 
+
+            grad_u_wall.x = du_dn * ex; 
+            grad_u_wall.y = du_dn * ey; 
+
+            grad_v_wall.x = dv_dn * ex; 
+            grad_v_wall.y = dv_dn * ey; 
+
+            grad_T_wall.x = 0.0; 
+            grad_T_wall.y = 0.0; 
+
+            const double u_face = 0.0; 
+            const double v_face = 0.0;
+
+            const Conserved Fv = viscous_normal_flux(grad_u_wall, grad_v_wall, grad_T_wall, u_face, v_face, mu, conductivity, face.nx, face.ny); 
+
+            residual(i, j) = residual(i, j) - Fv * (face.length / c.area); 
+
+        }
+
+    }
+
     void RansSolver::compute_full_meanflow_residual(const Primitive& Winf, double mu, double conductivity) { 
 
         compute_full_convective_residual(Winf); 
         add_interior_viscous_residual(mu, conductivity); 
+        add_wall_viscous_residual(mu, conductivity); 
 
     }
 
