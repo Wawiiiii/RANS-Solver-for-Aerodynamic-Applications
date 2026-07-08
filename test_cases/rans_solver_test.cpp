@@ -31,6 +31,12 @@ static void check_positive(const std::string& name, double got)
     if (!ok) ++g_failures;
 }
 
+static void check_true(const std::string& name, bool ok)
+{
+    std::printf("  [%s] %-28s\n", ok ? "PASS" : "FAIL", name.c_str());
+    if (!ok) ++g_failures;
+}
+
 static void test_convective_flux_atoms()
 {
     std::printf("Convective flux atom checks:\n");
@@ -355,6 +361,137 @@ static void test_wall_viscous_residual()
     }
 }
 
+static void test_rk5_pseudo_step()
+{
+    std::printf("RK5 pseudo-step checks:\n");
+
+    const int nt = 5;
+    const int nr = 4;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    rans::RansSolver solver(x, y, nt, nr);
+
+    const rans::Primitive Winf{1.0, 0.25, 0.05, 1.0 / rans::GAMMA};
+    solver.set_uniform_state(Winf);
+
+    double state_error = 0.0;
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const rans::Primitive W = rans::conserved_to_primitive(solver.state(i, j));
+            state_error = std::max(state_error, std::fabs(W.rho - Winf.rho));
+            state_error = std::max(state_error, std::fabs(W.u - Winf.u));
+            state_error = std::max(state_error, std::fabs(W.v - Winf.v));
+            state_error = std::max(state_error, std::fabs(W.p - Winf.p));
+        }
+    }
+    check_close("set_uniform_state", state_error, 0.0, 1e-14);
+
+    const double mu = 1.0e-4;
+    const double conductivity = 2.0e-4;
+    const double cfl = 1.0e-4;
+
+    const std::vector<double> dt = solver.compute_local_time_steps(cfl, mu);
+    double min_dt = 1e300;
+    double max_dt = 0.0;
+    bool finite_dt = true;
+
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const double value = dt[solver.cell_index(i, j)];
+            finite_dt = finite_dt && std::isfinite(value);
+            min_dt = std::min(min_dt, value);
+            max_dt = std::max(max_dt, value);
+        }
+    }
+
+    check_positive("min local dt", min_dt);
+    check_positive("max local dt", max_dt);
+    check_true("finite local dt", finite_dt);
+
+    solver.rk5_pseudo_step(Winf, mu, conductivity, cfl);
+
+    bool all_physical = true;
+    bool all_finite = true;
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const rans::Primitive W = rans::conserved_to_primitive(solver.state(i, j));
+            all_physical = all_physical && rans::is_physical(W);
+            all_finite = all_finite
+                && std::isfinite(W.rho)
+                && std::isfinite(W.u)
+                && std::isfinite(W.v)
+                && std::isfinite(W.p);
+        }
+    }
+
+    check_true("rk5 keeps physical", all_physical);
+    check_true("rk5 keeps finite", all_finite);
+}
+
+static void test_pseudo_time_iteration_loop()
+{
+    std::printf("Pseudo-time iteration loop checks:\n");
+
+    const int nt = 5;
+    const int nr = 4;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    rans::RansSolver solver(x, y, nt, nr);
+
+    const rans::Primitive Winf{1.0, 0.25, 0.05, 1.0 / rans::GAMMA};
+    solver.set_uniform_state(Winf);
+
+    const int max_iterations = 2;
+    const int returned =
+        solver.run_pseudo_time_iterations(
+            Winf,
+            1.0e-4,
+            2.0e-4,
+            1.0e-4,
+            max_iterations,
+            0,
+            0.0);
+
+    check_close("loop returns max iter", static_cast<double>(returned),
+                static_cast<double>(max_iterations), 0.0);
+
+    bool all_physical = true;
+    bool all_finite = true;
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            const rans::Primitive W = rans::conserved_to_primitive(solver.state(i, j));
+            all_physical = all_physical && rans::is_physical(W);
+            all_finite = all_finite
+                && std::isfinite(W.rho)
+                && std::isfinite(W.u)
+                && std::isfinite(W.v)
+                && std::isfinite(W.p);
+        }
+    }
+
+    check_true("loop keeps physical", all_physical);
+    check_true("loop keeps finite", all_finite);
+    check_true("loop residual finite", std::isfinite(solver.residual_linf_current()));
+}
+
 static void report_geometry(const mesh::RansMeshParams& p)
 {
     const mesh::Mesh2D m = mesh::RansMesher::generate(p);
@@ -431,6 +568,10 @@ int main()
     test_interior_viscous_residual();
     std::printf("\n");
     test_wall_viscous_residual();
+    std::printf("\n");
+    test_rk5_pseudo_step();
+    std::printf("\n");
+    test_pseudo_time_iteration_loop();
     std::printf("\n");
 
     // Production-resolution geometry checks.

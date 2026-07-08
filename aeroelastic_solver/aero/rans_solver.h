@@ -157,6 +157,14 @@ namespace rans {
         double local_time_step(int i, int j, double cfl, double mu) const;
         std::vector<double> compute_local_time_steps(double cfl, double mu) const;
         void rk5_pseudo_step(const Primitive& Winf, double mu, double conductivity, double cfl);
+        int run_pseudo_time_iterations(
+            const Primitive& Winf,
+            double mu,
+            double conductivity,
+            double cfl,
+            int max_iterations,
+            int print_every,
+            double target_residual);
 
 
     private:

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <iostream>
 #include <stdexcept>
 
 namespace rans {
@@ -989,6 +990,43 @@ namespace rans {
 
             fill_ghost_cells();
         }
+    }
+
+    int RansSolver::run_pseudo_time_iterations(
+        const Primitive& Winf,
+        double mu,
+        double conductivity,
+        double cfl,
+        int max_iterations,
+        int print_every,
+        double target_residual)
+    {
+        if (max_iterations < 0)
+            throw std::runtime_error("RANS: max_iterations must be non-negative.");
+
+        if (target_residual < 0.0)
+            throw std::runtime_error("RANS: target_residual must be non-negative.");
+
+        for (int iter = 0; iter <= max_iterations; ++iter) {
+            compute_full_meanflow_residual(Winf, mu, conductivity);
+            const double res = residual_linf_current();
+
+            if (print_every > 0 &&
+                (iter == 0 || iter == max_iterations || (iter % print_every) == 0)) {
+                std::cout << "RANS iter " << iter
+                          << " residual_linf = " << res << "\n";
+            }
+
+            if (res <= target_residual)
+                return iter;
+
+            if (iter == max_iterations)
+                break;
+
+            rk5_pseudo_step(Winf, mu, conductivity, cfl);
+        }
+
+        return max_iterations;
     }
 
 }
