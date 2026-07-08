@@ -78,6 +78,10 @@ namespace rans {
     Conserved central_flux(const Conserved& UL, const Conserved& UR, double nx, double ny);
     double face_spectral_radius(const Conserved& UL, const Conserved& UR, double nx, double ny);
 
+    Primitive reflected_wall_state(const Primitive& Wi, double nx, double ny); 
+
+    Primitive farfield_riemann_state(const Primitive& Wi, const Primitive& Winf, double nx, double ny); 
+
     // --- solver skeleton: mesh handling (Phase B0) ---
 
     // Summary of the built geometry, for verification.
@@ -136,8 +140,12 @@ namespace rans {
         Conserved& residual(int i, int j) { return R_[idx(i, j)]; }
 
         void zero_residual(); 
-        void compute_convective_residual(); 
         double residual_linf_current() const; 
+
+        void compute_interior_convective_residual();
+        void add_wall_convective_residual();
+        void add_farfield_convective_residual(const Primitive& Winf);
+        void compute_full_convective_residual(const Primitive& Winf);
 
 
     private:

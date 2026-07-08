@@ -66,6 +66,59 @@ static void test_convective_flux_atoms()
                 want_lambda, 1e-14);
 }
 
+static void test_convective_boundary_states()
+{
+    std::printf("Convective boundary state checks:\n");
+
+    {
+        const rans::Primitive Wi{1.0, 0.8, -0.3, 0.7};
+        const double nx = 0.6;
+        const double ny = 0.8;
+
+        const rans::Primitive Wg = rans::reflected_wall_state(Wi, nx, ny);
+        const double un_face =
+            0.5 * (Wi.u + Wg.u) * nx + 0.5 * (Wi.v + Wg.v) * ny;
+
+        check_close("wall avg normal velocity", un_face, 0.0, 1e-14);
+        check_close("wall reflected rho", Wg.rho, Wi.rho, 0.0);
+        check_close("wall reflected p", Wg.p, Wi.p, 0.0);
+    }
+
+    {
+        const rans::Primitive Wi{1.0, -0.15, 0.05, 0.9};
+        const rans::Primitive Winf{1.2, -0.2, 0.1, 1.0};
+        const double nx = 1.0;
+        const double ny = 0.0;
+
+        const rans::Primitive Wb =
+            rans::farfield_riemann_state(Wi, Winf, nx, ny);
+
+        const double ut_inf = -Winf.u * ny + Winf.v * nx;
+        const double ut_b = -Wb.u * ny + Wb.v * nx;
+
+        check_close("subsonic inflow tangential", ut_b, ut_inf, 1e-14);
+        check_positive("subsonic inflow rho", Wb.rho);
+        check_positive("subsonic inflow p", Wb.p);
+    }
+
+    {
+        const rans::Primitive Wi{1.0, 0.2, 0.1, 0.9};
+        const rans::Primitive Winf{1.1, -0.1, 0.05, 1.0};
+        const double nx = 1.0;
+        const double ny = 0.0;
+
+        const rans::Primitive Wb =
+            rans::farfield_riemann_state(Wi, Winf, nx, ny);
+
+        const double ut_i = -Wi.u * ny + Wi.v * nx;
+        const double ut_b = -Wb.u * ny + Wb.v * nx;
+
+        check_close("subsonic outflow pressure", Wb.p, Winf.p, 1e-14);
+        check_close("subsonic outflow tangential", ut_b, ut_i, 1e-14);
+        check_positive("subsonic outflow rho", Wb.rho);
+    }
+}
+
 static void test_convective_residual_conservation()
 {
     std::printf("Convective residual assembly checks:\n");
@@ -99,7 +152,7 @@ static void test_convective_residual_conservation()
         }
     }
 
-    solver.compute_convective_residual();
+    solver.compute_interior_convective_residual();
     check_positive("nontrivial residual", solver.residual_linf_current());
 
     rans::Conserved integrated;
@@ -114,6 +167,58 @@ static void test_convective_residual_conservation()
     check_close("integrated rhou residual", integrated.rhou, 0.0, 1e-12);
     check_close("integrated rhov residual", integrated.rhov, 0.0, 1e-12);
     check_close("integrated rhoE residual", integrated.rhoE, 0.0, 1e-12);
+}
+
+static void test_full_convective_residual_boundaries()
+{
+    std::printf("Full convective residual boundary checks:\n");
+
+    const int nt = 7;
+    const int nr = 6;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    rans::RansSolver solver(x, y, nt, nr);
+
+    const rans::Primitive Winf{1.0, 0.4, 0.0, 1.0 / rans::GAMMA};
+    const rans::Conserved Uinf = rans::primitive_to_conserved(Winf);
+
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            solver.state(i, j) = Uinf;
+        }
+    }
+
+    solver.zero_residual();
+    solver.add_wall_convective_residual();
+
+    double wall_mass = 0.0;
+    const int jw = solver.j_start();
+    for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+        wall_mass = std::max(wall_mass, std::fabs(solver.residual(i, jw).rho));
+    }
+
+    check_close("slip wall mass residual", wall_mass, 0.0, 1e-12);
+
+    const rans::Primitive Wcell{1.0, 0.4, 0.2, 1.0 / rans::GAMMA};
+    const rans::Conserved Ucell = rans::primitive_to_conserved(Wcell);
+
+    for (int j = solver.j_start(); j < solver.j_end(); ++j) {
+        for (int i = solver.i_start(); i < solver.i_end(); ++i) {
+            solver.state(i, j) = Ucell;
+        }
+    }
+
+    solver.compute_full_convective_residual(Winf);
+    check_positive("full residual nonzero", solver.residual_linf_current());
 }
 
 static void report_geometry(const mesh::RansMeshParams& p)
@@ -183,7 +288,11 @@ int main()
 {
     test_convective_flux_atoms();
     std::printf("\n");
+    test_convective_boundary_states();
+    std::printf("\n");
     test_convective_residual_conservation();
+    std::printf("\n");
+    test_full_convective_residual_boundaries();
     std::printf("\n");
 
     // Production-resolution geometry checks.

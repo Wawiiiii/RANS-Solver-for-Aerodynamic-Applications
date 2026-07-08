@@ -470,7 +470,7 @@ namespace rans {
 
     }
 
-    void RansSolver::compute_convective_residual() { 
+    void RansSolver::compute_interior_convective_residual() { 
 
         zero_residual(); 
         fill_ghost_cells(); 
@@ -550,5 +550,163 @@ namespace rans {
 
     }
 
+
+    Primitive reflected_wall_state(const Primitive& Wi, double nx, double ny) { 
+
+        if (!is_physical(Wi)) { 
+            throw std::runtime_error("RANS: non-physical state in reflected wall state. "); 
+        }
+
+        const double un = Wi.u * nx + Wi.v * ny; 
+
+        // ghost cells
+
+        Primitive Wg; 
+        Wg.rho = Wi.rho;
+        Wg.p = Wi.p; 
+
+        // speeds  
+        Wg.u = Wi.u - 2.0 * un * nx; 
+        Wg.v = Wi.v - 2.0 * un * ny; 
+
+        return Wg; 
+
+    }
+
+    Primitive farfield_riemann_state(const Primitive& Wi, const Primitive& Winf, double nx, double ny) { 
+
+        if (!is_physical(Wi)) { 
+            throw std::runtime_error("RANS: Non-Physical interior state in farfield_riemann_state"); 
+        }
+
+        if (!is_physical(Winf)) { 
+            throw std::runtime_error("RANS: Non-Physical freestream in farfield_riemann_state"); 
+        }
+
+        const double rhoi = Wi.rho; 
+        const double ui = Wi.u; 
+        const double vi = Wi.v; 
+        const double pi = Wi.p; 
+
+        const double rhoinf = Winf.rho; 
+        const double uinf = Winf.u; 
+        const double vinf = Winf.v; 
+        const double pinf = Winf.p;
+
+        const double ai = sound_speed(Wi); 
+        const double ainf = sound_speed(Winf); 
+
+        const double uni = ui * nx + vi * ny; 
+        const double uninf = uinf * nx + vinf * ny;
+
+        const double Vi = std::sqrt(ui * ui + vi * vi); 
+        const double Mach_i = Vi / ai; 
+
+        if (Mach_i >= 1.0) { 
+
+            if (uni < 0.0) { 
+
+                return Winf; 
+                
+            }
+
+            return Wi; 
+        }
+
+        // subsonic inflow
+
+        if (uni < 0.0) { 
+
+            const double pb = 0.5 * (pinf + pi - rhoi * ai * (uninf - uni)); 
+            const double rhob = rhoinf + (pb - pinf) / (ainf * ainf); 
+            const double unb = uninf - (pinf - pb) / (rhoinf * ainf);
+            const double ut_inf = -uinf * ny + vinf * nx; 
+
+            Primitive Wb; 
+            Wb.rho = rhob; 
+            Wb.p = pb; 
+
+            // speeds
+            Wb.u = unb * nx - ut_inf * ny; 
+            Wb.v = unb * ny + ut_inf * nx;
+
+            return Wb; 
+
+        }
+
+        // subsonic outflow
+        const double pb = pinf; 
+        const double rhob = rhoi + (pb - pi) / (ai*ai); 
+        const double unb = uni + (pi - pb) / (rhoi * ai); 
+        const double ut_i = -ui * ny + vi * nx; 
+
+        Primitive Wb; 
+        Wb.p = pb; 
+        Wb.rho = rhob; 
+
+        // speeds 
+        Wb.u = unb * nx - ut_i * ny; 
+        Wb.v = unb * ny + ut_i * nx; 
+
+        return Wb; 
+    
+    }
+
+    void RansSolver::add_wall_convective_residual() { 
+
+        const int j = j_start_; 
+
+        for (int i = i_start_; i < i_end_; i++) { 
+
+            const CellGeom& c = cell_geom(i, j); 
+            const FaceGeom& face = c.face[0]; 
+
+            const Conserved& Ui = state(i, j); 
+            const Primitive Wi = conserved_to_primitive(Ui); 
+            const Primitive Wg = reflected_wall_state(Wi, face.nx, face.ny); 
+
+            Primitive Wface; 
+            Wface.rho = 0.5 * (Wi.rho +  Wg.rho); 
+            Wface.u = 0.5 * (Wi.u + Wg.u); 
+            Wface.v = 0.5 * (Wi.v + Wg.v); 
+            Wface.p = 0.5 * (Wi.p + Wg.p); 
+
+            const Conserved Uface = primitive_to_conserved(Wface); 
+            const Conserved F = normal_flux(Uface, face.nx, face.ny); 
+
+            residual(i, j) = residual(i, j) + F * (face.length / c.area); 
+
+        }
+
+    }
+
+    void RansSolver::add_farfield_convective_residual(const Primitive& Winf) { 
+
+        const int j = j_end_ - 1; 
+
+        for (int i = i_start_; i < i_end_; i++) { 
+
+            const CellGeom& c = cell_geom(i, j); 
+            const FaceGeom& face = c.face[2]; 
+
+            const Conserved& Ui = state(i, j); 
+            const Primitive Wi = conserved_to_primitive(Ui); 
+            const Primitive Wb = farfield_riemann_state(Wi, Winf, face.nx, face.ny); 
+
+            const Conserved F = central_flux(Ui, primitive_to_conserved(Wb), face.nx, face.ny); 
+
+            residual(i, j) = residual(i, j) + F * (face.length / c.area); 
+
+        }
+
+    }
+
+    void RansSolver::compute_full_convective_residual(const Primitive& Winf) { 
+
+        compute_interior_convective_residual(); 
+        add_wall_convective_residual(); 
+        add_farfield_convective_residual(Winf); 
+
+    }
 
 }
