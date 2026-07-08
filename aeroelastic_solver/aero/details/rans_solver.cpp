@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 
@@ -1027,6 +1029,101 @@ namespace rans {
         }
 
         return max_iterations;
+    }
+
+    void RansSolver::write_flowfield(const std::string& filename) const
+    {
+        std::ofstream out(filename);
+        if (!out)
+            throw std::runtime_error("RANS: could not open flowfield output file.");
+
+        out << "# i j xc yc rho u v p mach\n";
+        out << std::scientific << std::setprecision(12);
+
+        for (int j = j_start_; j < j_end_; ++j) {
+            for (int i = i_start_; i < i_end_; ++i) {
+                const CellGeom& c = cell_geom(i, j);
+                const Primitive W = conserved_to_primitive(state(i, j));
+                const double speed = std::sqrt(W.u * W.u + W.v * W.v);
+                const double mach = speed / sound_speed(W);
+
+                out << (i - i_start_) << " "
+                    << (j - j_start_) << " "
+                    << c.xc << " "
+                    << c.yc << " "
+                    << W.rho << " "
+                    << W.u << " "
+                    << W.v << " "
+                    << W.p << " "
+                    << mach << "\n";
+            }
+        }
+    }
+
+    void RansSolver::write_wall_data(
+        const std::string& filename,
+        const Primitive& Winf,
+        double mu) const
+    {
+        if (!is_physical(Winf))
+            throw std::runtime_error("RANS: non-physical freestream in write_wall_data.");
+
+        if (mu < 0.0)
+            throw std::runtime_error("RANS: viscosity must be non-negative in write_wall_data.");
+
+        const double qinf = 0.5 * Winf.rho * (Winf.u * Winf.u + Winf.v * Winf.v);
+        if (qinf <= 0.0)
+            throw std::runtime_error("RANS: freestream dynamic pressure must be positive in write_wall_data.");
+
+        std::ofstream out(filename);
+        if (!out)
+            throw std::runtime_error("RANS: could not open wall output file.");
+
+        out << "# i x_wall y_wall p cp tau_x tau_y\n";
+        out << std::scientific << std::setprecision(12);
+
+        const int j = j_start_;
+
+        for (int i = i_start_; i < i_end_; ++i) {
+            const CellGeom& c = cell_geom(i, j);
+            const FaceGeom& face = c.face[0];
+            const Primitive Wc = conserved_to_primitive(state(i, j));
+
+            const double dx = c.xc - face.xc;
+            const double dy = c.yc - face.yc;
+            const double d = std::sqrt(dx * dx + dy * dy);
+
+            if (d <= 0.0)
+                throw std::runtime_error("RANS: zero wall distance in write_wall_data.");
+
+            const double ex = dx / d;
+            const double ey = dy / d;
+
+            const double du_dn = Wc.u / d;
+            const double dv_dn = Wc.v / d;
+
+            const double du_dx = du_dn * ex;
+            const double du_dy = du_dn * ey;
+            const double dv_dx = dv_dn * ex;
+            const double dv_dy = dv_dn * ey;
+
+            const double divergence = du_dx + dv_dy;
+            const double tau_xx = mu * (2.0 * du_dx - (2.0 / 3.0) * divergence);
+            const double tau_yy = mu * (2.0 * dv_dy - (2.0 / 3.0) * divergence);
+            const double tau_xy = mu * (du_dy + dv_dx);
+
+            const double tau_x = tau_xx * face.nx + tau_xy * face.ny;
+            const double tau_y = tau_xy * face.nx + tau_yy * face.ny;
+            const double cp = (Wc.p - Winf.p) / qinf;
+
+            out << (i - i_start_) << " "
+                << face.xc << " "
+                << face.yc << " "
+                << Wc.p << " "
+                << cp << " "
+                << tau_x << " "
+                << tau_y << "\n";
+        }
     }
 
 }

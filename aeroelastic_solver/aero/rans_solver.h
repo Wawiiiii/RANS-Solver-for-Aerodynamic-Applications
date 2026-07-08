@@ -5,6 +5,7 @@
 // the Euler headers. The viscous-physics atoms live here now; the mean-flow and
 // turbulence solver is built up in this same pair of files.
 
+#include <string>
 #include <vector>
 
 namespace rans {
@@ -165,6 +166,9 @@ namespace rans {
             int max_iterations,
             int print_every,
             double target_residual);
+
+        void write_flowfield(const std::string& filename) const;
+        void write_wall_data(const std::string& filename, const Primitive& Winf, double mu) const;
 
 
     private:

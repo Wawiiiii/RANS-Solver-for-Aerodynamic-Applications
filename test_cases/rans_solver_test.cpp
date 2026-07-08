@@ -37,6 +37,22 @@ static void check_true(const std::string& name, bool ok)
     if (!ok) ++g_failures;
 }
 
+static int count_data_lines(const std::string& filename)
+{
+    std::ifstream in(filename);
+    if (!in)
+        return -1;
+
+    int count = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] != '#')
+            ++count;
+    }
+
+    return count;
+}
+
 static void test_convective_flux_atoms()
 {
     std::printf("Convective flux atom checks:\n");
@@ -492,6 +508,55 @@ static void test_pseudo_time_iteration_loop()
     check_true("loop residual finite", std::isfinite(solver.residual_linf_current()));
 }
 
+static void test_output_helpers()
+{
+    std::printf("Output helper checks:\n");
+
+    const int nt = 5;
+    const int nr = 4;
+    std::vector<double> x(static_cast<size_t>(nt * nr));
+    std::vector<double> y(static_cast<size_t>(nt * nr));
+
+    for (int j = 0; j < nr; ++j) {
+        for (int i = 0; i < nt; ++i) {
+            const size_t id = static_cast<size_t>(i + j * nt);
+            x[id] = static_cast<double>(i);
+            y[id] = static_cast<double>(j);
+        }
+    }
+
+    rans::RansSolver solver(x, y, nt, nr);
+
+    const rans::Primitive Winf{1.0, 1.0, 0.0, 1.0};
+    solver.set_uniform_state(Winf);
+
+    const double mu = 0.01;
+    solver.write_flowfield("rans_test_flowfield.dat");
+    solver.write_wall_data("rans_test_wall.dat", Winf, mu);
+
+    check_close("flowfield data lines",
+                static_cast<double>(count_data_lines("rans_test_flowfield.dat")),
+                static_cast<double>((nt - 1) * (nr - 1)),
+                0.0);
+
+    check_close("wall data lines",
+                static_cast<double>(count_data_lines("rans_test_wall.dat")),
+                static_cast<double>(nt - 1),
+                0.0);
+
+    std::ifstream wall("rans_test_wall.dat");
+    std::string header;
+    std::getline(wall, header);
+
+    int i = -1;
+    double xw = 0.0, yw = 0.0, p = 0.0, cp = 0.0, tau_x = 0.0, tau_y = 0.0;
+    wall >> i >> xw >> yw >> p >> cp >> tau_x >> tau_y;
+
+    check_close("wall output cp", cp, 0.0, 1e-14);
+    check_close("wall output tau_x", tau_x, -2.0 * mu, 1e-14);
+    check_close("wall output tau_y", tau_y, 0.0, 1e-14);
+}
+
 static void report_geometry(const mesh::RansMeshParams& p)
 {
     const mesh::Mesh2D m = mesh::RansMesher::generate(p);
@@ -572,6 +637,8 @@ int main()
     test_rk5_pseudo_step();
     std::printf("\n");
     test_pseudo_time_iteration_loop();
+    std::printf("\n");
+    test_output_helpers();
     std::printf("\n");
 
     // Production-resolution geometry checks.
